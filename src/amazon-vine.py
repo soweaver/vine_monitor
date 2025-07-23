@@ -6,6 +6,7 @@ import logging
 import copy
 import json
 import dataclasses
+import datetime
 import random
 from dataclasses import dataclass
 from typing import Set, Tuple, Optional
@@ -34,8 +35,8 @@ STATE_FILE: Final = 'vine_monitor_state.json'
 USER_AGENT: Final[str] = fake_useragent.UserAgent().ff
 
 # Discord Webhooks
-DISCORD_WEBHOOK_RFY: str = "https://discord.com/api/webhooks/1397327066713559161/-AUIU28c1GtV3M9tBwMjzRWC-T7uw373fdOuyqVgtuUg61ocvLWWddGWazxzUf6Kech5"   # Recommended for you and Available for all
-DISCORD_WEBHOOK_AI: str = "https://discord.com/api/webhooks/1397333337105760346/7OftTTqDWUbG0f1FpoS88vGg9kdknYqAoaSz_mEDDwVPZ8j3b2MY6nL3tS5aegvY9Npn"   # Additional Items
+DISCORD_WEBHOOK_RFY: Final = "https://discord.com/api/webhooks/1397327066713559161/-AUIU28c1GtV3M9tBwMjzRWC-T7uw373fdOuyqVgtuUg61ocvLWWddGWazxzUf6Kech5"   # Recommended for you and Available for all
+DISCORD_WEBHOOK_AI: Final = "https://discord.com/api/webhooks/1397333337105760346/7OftTTqDWUbG0f1FpoS88vGg9kdknYqAoaSz_mEDDwVPZ8j3b2MY6nL3tS5aegvY9Npn"   # Additional Items
 
 @dataclass(frozen=True, eq=True)
 class VineItem:
@@ -85,11 +86,14 @@ def load_state() -> Tuple[Optional[Set[VineItem]], Optional[Set[VineItem]], Opti
 def send_discord_notification(webhook_url, item, queue_name):
     """Sends a notification to a Discord webhook using an embed."""
     logging.info("Sending Discord notification for: %s", item.title)
+
+    # Use a placeholder if the title is empty, as Discord requires a non-empty title.
+    notification_title = item.title if item.title else f"New Item (ASIN: {item.asin})"
     try:
         data = {
             "embeds": [
                 {
-                    "title": item.title,
+                    "title": notification_title,
                     "url": item.url,
                     "description": f"New item found in **{queue_name}**!",
                     "color": 5814783,  # Hex color #58D68D (a nice green)
@@ -97,12 +101,16 @@ def send_discord_notification(webhook_url, item, queue_name):
                     "fields": [
                         {"name": "ASIN", "value": item.asin, "inline": True}
                     ],
-                    "footer": {"text": "Vine Monitor"}
+                    "footer": {"text": "Vine Monitor"},
+                    "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat()
                 }
             ]
         }
         payload = json.dumps(data).encode('utf-8')
-        headers = {'Content-Type': 'application/json'}
+        headers = {
+            'Content-Type': 'application/json',
+            'User-Agent': USER_AGENT
+        }
         req = urllib.request.Request(webhook_url, data=payload, headers=headers)
         with urllib.request.urlopen(req) as response:
             if response.status not in [200, 204]:
@@ -207,13 +215,14 @@ def get_list(br, url, name) -> Optional[Set[VineItem]]:
         img_element = tile.select_one("img")
         img_url = img_element['src'] if img_element else "IMG_NOT_FOUND"
 
-        title_element = tile.select_one("span.a-truncate-full.a-offscreen")
+        # The title is inside a specific span. The 'a-offscreen' class might be
+        # dynamically added, so we look for the more stable 'a-truncate-full'.
+        title_element = tile.select_one("span.a-truncate-full")
         if title_element:
             title = title_element.text.strip()
         else:
-            # Fallback to image alt text if the primary title span isn't found
-            title = (img_element['alt'].strip() if img_element and
-                     'alt' in img_element.attrs else "TITLE_NOT_FOUND")
+            # Fallback to the image alt text if the span isn't found.
+            title = (img_element['alt'].strip() if img_element and 'alt' in img_element.attrs else "TITLE_NOT_FOUND")
 
         if not all([asin, relative_url]):
             logging.warning("Could not parse a tile completely in %s. Tile: %s", name, tile)
@@ -336,27 +345,12 @@ parser.add_option('--browser', dest='browser',
                   help='Which browser to use ("firefox" or "chrome") from which to load the session cookies (default is "%default")',
                   type="string", default='firefox')
 
-# parser.add_option('--discord-webhook-rfy', dest='discord_webhook_rfy',
-#                   help='Discord webhook URL for notifications',
-#                   type="string", default=None)
-
-# parser.add_option('--discord-webhook-ai', dest='discord_webhook_ai',
-#                   help='Discord webhook URL for Additional Item Notifications',
-#                   type="string", default=None)
-
-
 (OPTIONS, _args) = parser.parse_args()
 
 setup_logging()
 logging.info("Vine Monitor starting up.")
 logging.info("Using browser: %s", OPTIONS.browser)
 
-
-# if OPTIONS.discord_webhook_rfy:
-#     logging.info("Discord notifications enabled for Recommended for You and Available for All.")
-
-# if OPTIONS.discord_webhook_ai:
-#     logging.info("Discord notifications enabled for Additional Items.")
 
 if DISCORD_WEBHOOK_RFY:
     logging.info("Discord notifications enabled for Recommended for You and Available for All.")
