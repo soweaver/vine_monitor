@@ -111,6 +111,87 @@ def setup_logging():
     # Console Handler
     stream_handler = logging.StreamHandler(sys.stdout)
     stream_handler.setFormatter(formatter)
+    logger.addHandler(stream_handler)
+
+def check_and_update_queues(
+    client: VineClient,
+    rfy_list: Set[VineItem],
+    your_queue_list: Set[VineItem],
+    vine_for_all_list: Set[VineItem],
+    priority_terms: Set[str]
+) -> Tuple[Set[VineItem], Set[VineItem], Set[VineItem]]:
+    """
+    Checks for new items in all queues, sends notifications, and updates the state.
+    """
+    logging.info("Checking for new items...")
+
+    # Recommended for You
+    new_rfy_items = client.get_list(config.RFY_URL, "Recommended for You")
+    if new_rfy_items is not None:
+        new_items = new_rfy_items - rfy_list
+        if new_items:
+            logging.info("Found %d new Recommended for You items.", len(new_items))
+            for item in new_items:
+                logging.info("New RFY item: %s", item.title)
+                if config.DISCORD_WEBHOOK_RFY:
+                    send_discord_notification(config.DISCORD_WEBHOOK_RFY, item, "Recommended for You")
+                if priority_terms and check_for_priority_match(item, priority_terms):
+                    logging.info("Priority match for RFY item: %s", item.title)
+                    if config.DISCORD_WEBHOOK_PRIORITY:
+                        send_discord_notification(config.DISCORD_WEBHOOK_PRIORITY, item, "PRIORITY")
+            rfy_list.update(new_items)
+        else:
+            logging.info("No new Recommended for You items.")
+    else:
+        logging.warning("Could not retrieve Recommended for You list.")
+
+    # Additional Items (Your Queue)
+    new_your_queue_items = client.get_full_additional_items_list()
+    if new_your_queue_items is not None:
+        new_items = new_your_queue_items - your_queue_list
+        if new_items:
+            logging.info("Found %d new Additional Items.", len(new_items))
+            for item in new_items:
+                logging.info("New Additional Item: %s", item.title)
+                if config.DISCORD_WEBHOOK_AI:
+                    send_discord_notification(config.DISCORD_WEBHOOK_AI, item, "Additional Items")
+                if priority_terms and check_for_priority_match(item, priority_terms):
+                    logging.info("Priority match for Additional Item: %s", item.title)
+                    if config.DISCORD_WEBHOOK_PRIORITY:
+                        send_discord_notification(config.DISCORD_WEBHOOK_PRIORITY, item, "PRIORITY")
+            your_queue_list.update(new_items)
+        else:
+            logging.info("No new Additional Items.")
+    else:
+        logging.warning("Could not retrieve Additional Items list.")
+
+    # Vine for All
+    new_afa_items = client.get_list(config.AFA_URL, "Available for all")
+    if new_afa_items is not None:
+        new_items = new_afa_items - vine_for_all_list
+        if new_items:
+            logging.info("Found %d new Available for All items.", len(new_items))
+            for item in new_items:
+                logging.info("New AFA item: %s", item.title)
+                if config.DISCORD_WEBHOOK_AFA:
+                    send_discord_notification(config.DISCORD_WEBHOOK_AFA, item, "Available for All")
+                if priority_terms and check_for_priority_match(item, priority_terms):
+                    logging.info("Priority match for AFA item: %s", item.title)
+                    if config.DISCORD_WEBHOOK_PRIORITY:
+                        send_discord_notification(config.DISCORD_WEBHOOK_PRIORITY, item, "PRIORITY")
+            vine_for_all_list.update(new_items)
+        else:
+            logging.info("No new Available for All items.")
+    else:
+        logging.warning("Could not retrieve Available for All list.")
+
+    save_state(rfy_list, your_queue_list, vine_for_all_list)
+    return rfy_list, your_queue_list, vine_for_all_list
+
+def main():
+    setup_logging()
+    logging.info("Vine Monitor starting up.")
+    logging.info("Using browser: %s", config.BROWSER_TYPE)
      
     # Load priority terms
     priority_terms = load_priority_terms()
@@ -118,6 +199,67 @@ def setup_logging():
         logging.info("Loaded %d priority terms.", len(priority_terms))
 
     if config.DISCORD_WEBHOOK_RFY:
+        logging.debug("Discord notifications enabled for Recommended for You and Available for All.")
+
+    if config.DISCORD_WEBHOOK_AI:
+        logging.debug("Discord notifications enabled for Additional Items.")
+
+    if config.DISCORD_WEBHOOK_PRIORITY:
+        logging.debug("Discord notifications enabled for Priority Items.")
+
+    client = VineClient()
+    
+    try:
+        client.create_browser()
+    except NotLoggedInError as e:
+        logging.critical("Could not establish initial session: %s", e)
+        logging.critical("Please log in to Amazon in your browser and restart the script.")
+        sys.exit(1)
+
+    # Try to load previous state
+    rfy_list, your_queue_list, vine_for_all_list = load_state()
+
+    if rfy_list is None:  # No state file found or it was empty/invalid
+        logging.info("No previous state found. Performing initial scan.")
+        rfy_list = client.get_list(config.RFY_URL, "Recommended for You")
+        your_queue_list = client.get_full_additional_items_list()
+        vine_for_all_list = client.get_list(config.AFA_URL, "Available for all")
+
+        if not rfy_list and not your_queue_list and not vine_for_all_list:
+            logging.critical('Cannot get initial item lists on first run. Exiting.')
+            sys.exit(1)
+        else:
+            # Save the initial state so we have a baseline for the next run
+            save_state(rfy_list, your_queue_list, vine_for_all_list)
+    else:
+        logging.info(
+            f"Loaded previous state: {len(rfy_list)} RFY, "
+            f"{len(your_queue_list)} Additional, {len(vine_for_all_list)} AFA items."
+        )
+
+    while True:
+        try:
+            rfy_list, your_queue_list, vine_for_all_list = check_and_update_queues(
+                client, rfy_list, your_queue_list, vine_for_all_list, priority_terms
+            )
+        except NotLoggedInError as e:
+            logging.error("Session expired or login failed: %s", e)
+            logging.info("Attempting to re-establish session...")
+            while True:
+                try:
+                    client.create_browser()
+                    logging.info("Session re-established successfully.")
+                    # After re-establishing, continue to the next main loop iteration
+                    break
+                except NotLoggedInError as retry_e:
+                    logging.error("Failed to re-establish session: %s", retry_e)
+                    logging.info("Please log in to Amazon in your browser.")
+                    slp_time = random.randint(120, 180)  # Wait between 3 and 5 minutes before retrying
+                    logging.info("Retrying in %d seconds...", slp_time)
+                    time.sleep(slp_time)  # Wait between 3 and 5 minutes before retrying
+            continue  # Go back to the top of the loop to check immediately
+        except Exception:
+            logging.critical("An unexpected error occurred in the main loop.", exc_info=True)
 
         wait_seconds = random.randint(240, 400) # Wait between 4 and 6 minutes before the next check
         logging.info("Waiting for %d seconds (%.1f minutes) for the next check.",
