@@ -15,7 +15,7 @@ class Config:
     ADDITIONAL_ITEMS_URL: str = 'https://www.amazon.co.uk/vine/vine-items?queue=encore'
     AFA_URL: str = 'https://www.amazon.co.uk/vine/vine-items?queue=last_chance'
     
-    # Files
+    # Files 
     STATE_FILE: str = 'vine_monitor_state.json'
     PRIORITY_TERMS_FILE: str = 'priority_terms.json'
     LOG_FILE: str = 'vine_monitor.log'
