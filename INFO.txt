@@ -1,0 +1,11 @@
+
+> priority_terms.json: Update to flag specific items
+
+Run from this directory
+Amazon vine poller...
+> python src\amazon-vine.py
+> vine_monitor.log: output destination
+
+Results web page. This poles the log file and filters lines for display in a local web page.
+> python src\server.py
+> index.html: web page viewer

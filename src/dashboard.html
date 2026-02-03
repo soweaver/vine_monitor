@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Log Viewer</title>
+<style>
+    body { font-family: monospace; background: #111; color: #eee; padding: 20px; }
+    #log { 
+        white-space: pre-wrap; 
+        background: #222; 
+        padding: 10px; 
+        border-radius: 6px; 
+        height: 80vh;
+        overflow-y: auto;
+    }
+    input { padding: 6px; width: 300px; margin-bottom: 10px; }
+
+    /* Existing color coding */
+    .info { color: #4da6ff; }
+    .warn { color: #ffcc00; }
+    .error { color: #ff6666; }
+
+    /* ⭐ New highlight for “New Additional Item” */
+    .newitem { color: #00ff99; font-weight: bold; }
+    .prioritymatch {color: #ff66ff; font-weight: bold; }
+	
+	// ⭐ Highlight "Priority match found"
+    if (lower.includes("priority match found"))
+        return `<span class="prioritymatch">${line}</span>`;
+
+
+</style></head>
+<body>
+
+<h2>Live Log Viewer</h2>
+
+<label>Filter text: </label>
+<input id="filter" type="text" placeholder="Type to filter..." oninput="render()">
+
+<pre id="log"></pre>
+
+<script>
+let fullLog = "";
+let lastRendered = "";
+
+async function fetchLog() {
+    try {
+        const res = await fetch("/log");
+        fullLog = await res.text();
+        render(true);
+    } catch {
+        document.getElementById("log").textContent = "Error loading log";
+    }
+}
+
+function colorize(line) {
+    const lower = line.toLowerCase();
+
+    // ⭐ Highlight lines containing “New Additional Item”
+    if (lower.includes("new additional item"))
+        return `<span class="newitem">${line}</span>`;
+
+    // Existing rules
+    if (lower.includes("error")) return `<span class="error">${line}</span>`;
+    if (lower.includes("warn")) return `<span class="warn">${line}</span>`;
+    if (lower.includes("info")) return `<span class="info">${line}</span>`;
+
+    return line;
+}
+
+function render(autoScroll = false) {
+    const filter = document.getElementById("filter").value.toLowerCase();
+    const lines = fullLog.split("\n");
+
+    const filtered = filter
+        ? lines.filter(line => line.toLowerCase().includes(filter))
+        : lines;
+
+    const html = filtered.map(colorize).join("\n");
+
+    const logEl = document.getElementById("log");
+    const shouldScroll = autoScroll && (html !== lastRendered);
+
+    logEl.innerHTML = html;
+    lastRendered = html;
+
+    if (shouldScroll) {
+        logEl.scrollTop = logEl.scrollHeight;
+    }
+}
+
+// poll every 2 seconds
+setInterval(fetchLog, 2000);
+fetchLog();
+</script>
+</body>
+</html>
