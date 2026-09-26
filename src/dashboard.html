@@ -47,11 +47,12 @@
 let fullLog = "";
 let lastRendered = "";
 
-// Auto-scroll flagging: every FLAG_EVERY lines scrolled in, flag the last displayed line
+// Auto-scroll flagging: every FLAG_EVERY lines scrolled in, flag the last displayed line.
+// Flags are keyed by line text (not position) so they stay with their line even when
+// the log is served as a fixed-size tail and older lines drop off the top.
 const FLAG_EVERY = 10;
-const flaggedLines = new Set();   // indices into fullLog lines
-let lastLineCount = 0;            // fullLog line count at previous render
-let lastDisplayedCount = 0;       // displayed (filtered) line count at previous render
+const flaggedLines = new Set();   // text of flagged lines
+let lastShownLine = null;         // last displayed line at previous render
 let scrolledSinceFlag = 0;
 
 async function fetchLog() {
@@ -81,42 +82,38 @@ function colorize(line) {
 
 function render(autoScroll = false) {
     const filter = document.getElementById("filter").value.toLowerCase();
-    const lines = fullLog.split("\n");
 
-    // Log was truncated/rotated: old flag positions are meaningless
-    if (lines.length < lastLineCount) {
-        flaggedLines.clear();
-        scrolledSinceFlag = 0;
-        lastDisplayedCount = 0;
-    }
-    lastLineCount = lines.length;
+    const filtered = fullLog.split("\n").filter(line =>
+        line.trim() && (!filter || line.toLowerCase().includes(filter)));
 
-    const filtered = [];
-    lines.forEach((line, i) => {
-        if (line.trim() && (!filter || line.toLowerCase().includes(filter)))
-            filtered.push(i);
-    });
+    const rawText = filtered.join("\n");
 
-    const logEl = document.getElementById("log");
-    const rawText = filtered.map(i => lines[i]).join("\n");
-    const shouldScroll = autoScroll && (rawText !== lastRendered);
+    // Poll brought nothing new: leave the DOM and scroll position alone
+    if (autoScroll && rawText === lastRendered) return;
 
-    if (shouldScroll && lastRendered !== "") {
-        scrolledSinceFlag += Math.max(0, filtered.length - lastDisplayedCount);
+    if (autoScroll && lastRendered !== "") {
+        // New lines are everything after where the previous last line now sits
+        const prevPos = filtered.lastIndexOf(lastShownLine);
+        scrolledSinceFlag += filtered.length - 1 - prevPos;
         if (scrolledSinceFlag >= FLAG_EVERY && filtered.length) {
             flaggedLines.add(filtered[filtered.length - 1]);
             scrolledSinceFlag = 0;
         }
     }
-    lastDisplayedCount = filtered.length;
+    lastShownLine = filtered.length ? filtered[filtered.length - 1] : null;
     lastRendered = rawText;
 
-    logEl.innerHTML = filtered.map(i => {
-        const html = colorize(lines[i]);
-        return flaggedLines.has(i) ? `<span class="scrollflag">${html}</span>` : html;
+    // Forget flags whose lines have dropped out of the log
+    const present = new Set(fullLog.split("\n"));
+    for (const f of flaggedLines) if (!present.has(f)) flaggedLines.delete(f);
+
+    const logEl = document.getElementById("log");
+    logEl.innerHTML = filtered.map(line => {
+        const html = colorize(line);
+        return flaggedLines.has(line) ? `<span class="scrollflag">${html}</span>` : html;
     }).join("\n");
 
-    if (shouldScroll) {
+    if (autoScroll) {
         logEl.scrollTop = logEl.scrollHeight;
     }
 }
