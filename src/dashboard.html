@@ -23,6 +23,10 @@
     /* ⭐ New highlight for “New Additional Item” */
     .newitem { color: #00ff99; font-weight: bold; }
     .prioritymatch {color: #ff66ff; font-weight: bold; }
+
+    /* Flag dropped on the last visible line every ~10 auto-scrolled lines */
+    .scrollflag { background: #3a2f00; border-left: 3px solid #ffcc00; }
+    .scrollflag::before { content: "\2691 "; color: #ffcc00; }
 	
 	// ⭐ Highlight "Priority match found"
     if (lower.includes("priority match found"))
@@ -42,6 +46,13 @@
 <script>
 let fullLog = "";
 let lastRendered = "";
+
+// Auto-scroll flagging: every FLAG_EVERY lines scrolled in, flag the last displayed line
+const FLAG_EVERY = 10;
+const flaggedLines = new Set();   // indices into fullLog lines
+let lastLineCount = 0;            // fullLog line count at previous render
+let lastDisplayedCount = 0;       // displayed (filtered) line count at previous render
+let scrolledSinceFlag = 0;
 
 async function fetchLog() {
     try {
@@ -72,17 +83,38 @@ function render(autoScroll = false) {
     const filter = document.getElementById("filter").value.toLowerCase();
     const lines = fullLog.split("\n");
 
-    const filtered = filter
-        ? lines.filter(line => line.toLowerCase().includes(filter))
-        : lines;
+    // Log was truncated/rotated: old flag positions are meaningless
+    if (lines.length < lastLineCount) {
+        flaggedLines.clear();
+        scrolledSinceFlag = 0;
+        lastDisplayedCount = 0;
+    }
+    lastLineCount = lines.length;
 
-    const html = filtered.map(colorize).join("\n");
+    const filtered = [];
+    lines.forEach((line, i) => {
+        if (line.trim() && (!filter || line.toLowerCase().includes(filter)))
+            filtered.push(i);
+    });
 
     const logEl = document.getElementById("log");
-    const shouldScroll = autoScroll && (html !== lastRendered);
+    const rawText = filtered.map(i => lines[i]).join("\n");
+    const shouldScroll = autoScroll && (rawText !== lastRendered);
 
-    logEl.innerHTML = html;
-    lastRendered = html;
+    if (shouldScroll && lastRendered !== "") {
+        scrolledSinceFlag += Math.max(0, filtered.length - lastDisplayedCount);
+        if (scrolledSinceFlag >= FLAG_EVERY && filtered.length) {
+            flaggedLines.add(filtered[filtered.length - 1]);
+            scrolledSinceFlag = 0;
+        }
+    }
+    lastDisplayedCount = filtered.length;
+    lastRendered = rawText;
+
+    logEl.innerHTML = filtered.map(i => {
+        const html = colorize(lines[i]);
+        return flaggedLines.has(i) ? `<span class="scrollflag">${html}</span>` : html;
+    }).join("\n");
 
     if (shouldScroll) {
         logEl.scrollTop = logEl.scrollHeight;
